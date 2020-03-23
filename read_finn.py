@@ -13,7 +13,7 @@ import glob
 import scipy.io
 import datetime as dt
 import numpy as np
-import tilt
+import dipole #Kalles dipole public library on github
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -93,10 +93,41 @@ omni.loc[:,'useneg'] = useneg
 omni.loc[:,'milanlong'] = omni.milan.rolling(window, min_periods=window, center=False).mean()    #average IMF data
 #omni = omni.drop(['bxlong','bzlong','byneg','bypos','PC_N_INDEX','Beta','E','Mach_num','Mgs_mach_num','y'],axis=1) #need to drop PC index as it contain a lot of nans. Also other fields will exclude data when we later use dropna()
 omnicopy = omni.copy()
-omni2 = omni.reindex(index=pd.DataFrame(index=dtimes).index, method='nearest',tolerance='30sec')    #new ocb
-omni2.loc[:,'tilt'] = tilt.tilt(omni2.index)
-        
-        
+omni2 = omni.reindex(index=dtimes, method='nearest',tolerance='30sec')    #new ocb
+omni2.loc[:,'tilt'] = dipole.dipole_tilt(omni2.index)
+
+#Sophie list statistics
+sophie = pd.read_hdf('sophie75.h5')
+use = (sophie.index>=dtimes[0]) & (sophie.index<=dtimes[-1])
+sophie = sophie[use].copy()
+exp = sophie.ssphase == 2
+sophiexp = sophie[exp].copy()
+
+#begin experimental
+sophiexp.loc[:,'tilt'] = dipole.dipole_tilt(sophiexp.index)
+omni3 = omni.reindex(index=sophiexp.index, method='nearest', tolerance='30sec')
+use = (omni.index>=sophiexp.index[0]) & (omni.index<=sophiexp.index[-1])
+omni4 = omni[use].copy()
+chunk = 1e6
+n = len(omni4)
+idxs = omni4.index.values
+chunked = np.array_split(idxs, n/chunk)
+for chunk in chunked:
+    omni4.loc[omni4.index.isin(chunk),'tilt'] = dipole.dipole_tilt(omni4.index[omni4.index.isin(chunk)])
+sophiexp.loc[:,'bylong'] = omni3.bylong
+sophiexp.loc[:,'milanlong'] = omni3.milanlong
+sophiexp.loc[:,'substorm'] = sophiexp.ssphase==2
+ssum = sophiexp.groupby([pd.cut(sophiexp.tilt, bins=np.array([-35,-10,10,35])), \
+                pd.cut(sophiexp.bylong, bins=np.array([-50,-2,2,50]))]).substorm.sum()
+ocount = omni4.groupby([pd.cut(omni4.tilt, bins=np.array([-35,-10,10,35])), \
+                pd.cut(omni4.bylong, bins=np.array([-50,-2,2,50]))]).tilt.count()
+ssum/ocount
+
+#end experimental
+
+sophie2 = sophiexp.reindex(index=dtimes, method='pad',tolerance='60min')
+sophie2.loc[:,'substorm'] = sophie2.ssphase==2
+
 if hemi == 'nord':
     p ='n'
 if hemi == 'south':
@@ -137,10 +168,12 @@ for ff in files:
     dta = np.concatenate((omni2.tilt, omni2.tilt, omni2.tilt, omni2.tilt, omni2.tilt, omni2.tilt))
     dates = np.concatenate((omni2.index, omni2.index, omni2.index, omni2.index, \
                             omni2.index, omni2.index))
+    substorm = np.concatenate((sophie2.substorm, sophie2.substorm, sophie2.substorm, \
+                               sophie2.substorm, sophie2.substorm, sophie2.substorm))
     
     data = {'dates':dates, 'mlteq':mlteq, 'mltpol':mltpol, 'mlateq':mlateq, 'mlatpol':mlatpol, \
             'sat':sat, 'ovalflux':ovalflux, 'By_GSM':By_GSM, 'milanlong':milanlong, \
-            'bylong':bylong, 'usepos':usepos, 'useneg':useneg, 'tilt':dta}
+            'bylong':bylong, 'usepos':usepos, 'useneg':useneg, 'tilt':dta, 'substorm':substorm}
     
     df = pd.DataFrame(data)
     #df.index = df.dates
